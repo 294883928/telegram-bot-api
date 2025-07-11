@@ -1,98 +1,98 @@
-# Telegram Bot API
+from flask import Flask, request
+import requests
+import os
 
-The Telegram Bot API provides an HTTP API for creating [Telegram Bots](https://core.telegram.org/bots).
+# Use your bot token here (for learning/demo - in production, use env vars)
+TOKEN = "7801617115:AAFg_Onl9I8Ewm_nQ6ZIIE-2n6iPf_-8IpY"
+TELEGRAM_API = f'https://api.telegram.org/bot{TOKEN}'
 
-If you've got any questions about bots or would like to report an issue with your bot, kindly contact us at [@BotSupport](https://t.me/BotSupport) in Telegram.
+app = Flask(__Meme DOCF__)
 
-Please note that only global Bot API issues that affect all bots are suitable for this repository.
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.get_json()
+    message = data.get("message")
+    if not message or 'text' not in message:
+        return '', 200
+    
+    chat_id = message["chat"]["id"]
+    user_text = message["text"].strip()
 
-## Table of Contents
-- [Installation](#installation)
-- [Dependencies](#dependencies)
-- [Usage](#usage)
-- [Documentation](#documentation)
-- [Moving a bot to a local server](#switching)
-- [Moving a bot from one local server to another](#moving)
-- [License](#license)
+    if user_text.startswith('/tokens'):
+        parts = user_text.split()
+        if len(parts) == 2:
+            wallet_address = parts[1]
+            tokens = get_solana_wallet_tokens(wallet_address)
+            reply = format_tokens_reply(tokens, wallet_address)
+        else:
+            reply = "Usage: /tokens WALLET_ADDRESS"
+    elif user_text.startswith('/pair'):
+        parts = user_text.split()
+        if len(parts) == 3:
+            chain = parts[1]
+            pair_address = parts[2]
+            info = get_dexscreener_pair_info(chain, pair_address)
+            reply = format_pair_reply(info, pair_address)
+        else:
+            reply = "Usage: /pair CHAIN PAIR_ADDRESS"
+    else:
+        reply = "Commands:\n/tokens WALLET_ADDRESS\n/pair CHAIN PAIR_ADDRESS"
+    
+    send_message(chat_id, reply)
+    return '', 200
 
-<a name="installation"></a>
-## Installation
+def send_message(chat_id, text):
+    url = f"{TELEGRAM_API}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    requests.post(url, json=payload)
 
-The simplest way to build and install `Telegram Bot API server` is to use our [Telegram Bot API server build instructions generator](https://tdlib.github.io/telegram-bot-api/build.html).
-If you do that, you'll only need to choose the target operating system to receive the complete build instructions.
+def get_solana_wallet_tokens(wallet_address):
+    url = f"https://public-api.solscan.io/account/tokens?account={wallet_address}"
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json()
+    return None
 
-In general, you need to install all `Telegram Bot API server` [dependencies](#dependencies) and compile the source code using CMake:
+def format_tokens_reply(tokens, wallet_address):
+    if not tokens or isinstance(tokens, dict) and tokens.get("message"):
+        return f"Could not fetch tokens for {wallet_address}."
+    reply = f"Tokens for {wallet_address}:\n"
+    for t in tokens[:10]:  # Show only first 10 for brevity
+        mint = t.get("tokenAddress", "N/A")
+        amount = t.get("tokenAmount", {}).get("uiAmountString", "0")
+        symbol = t.get("tokenSymbol", "")
+        reply += f"{symbol or mint}: {amount}\n"
+    if len(tokens) > 10:
+        reply += f"...and {len(tokens)-10} more."
+    return reply
 
-```sh
-git clone --recursive https://github.com/tdlib/telegram-bot-api.git
-cd telegram-bot-api
-mkdir build
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build . --target install
-```
+def get_dexscreener_pair_info(chain, pair_address):
+    url = f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair_address}"
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json()
+    return None
 
-<a name="dependencies"></a>
-## Dependencies
-To build and run `Telegram Bot API server` you will need:
+def format_pair_reply(info, pair_address):
+    if not info or not info.get("pair"):
+        return f"Could not fetch info for pair {pair_address}."
+    pair = info["pair"]
+    base = pair.get("baseToken", {}).get("symbol", "")
+    quote = pair.get("quoteToken", {}).get("symbol", "")
+    price = pair.get("priceUsd", "N/A")
+    vol24h = pair.get("volume", {}).get("h24", "N/A")
+    reply = (
+        f"{base}/{quote} ({pair_address})\n"
+        f"Price: ${price}\n"
+        f"24h Volume: {vol24h}\n"
+        f"More: {pair.get('url', 'N/A')}"
+    )
+    return reply
 
-* OpenSSL
-* zlib
-* C++17 compatible compiler (e.g., Clang 5.0+, GCC 7.0+, MSVC 19.1+ (Visual Studio 2017.7+), Intel C++ Compiler 19+) (build only)
-* gperf (build only)
-* CMake (3.10+, build only)
-
-<a name="usage"></a>
-## Usage
-
-Use `telegram-bot-api --help` to receive the list of all available options of the Telegram Bot API server.
-
-The only mandatory options are `--api-id` and `--api-hash`. You must obtain your own `api_id` and `api_hash`
-as described in https://core.telegram.org/api/obtaining_api_id and specify them using the `--api-id` and `--api-hash` options
-or the `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` environment variables.
-
-To enable Bot API features not available at `https://api.telegram.org`, specify the option `--local`. In the local mode the Bot API server allows to:
-* Download files without a size limit.
-* Upload files up to 2000 MB.
-* Upload files using their local path and [the file URI scheme](https://en.wikipedia.org/wiki/File_URI_scheme).
-* Use an HTTP URL for the webhook.
-* Use any local IP address for the webhook.
-* Use any port for the webhook.
-* Set *max_webhook_connections* up to 100000.
-* Receive the absolute local path as a value of the *file_path* field without the need to download the file after a *getFile* request.
-
-The Telegram Bot API server accepts only HTTP requests, so a TLS termination proxy needs to be used to handle remote HTTPS requests.
-
-By default the Telegram Bot API server is launched on the port 8081, which can be changed using the option `--http-port`.
-
-<a name="documentation"></a>
-## Documentation
-See [Bots: An introduction for developers](https://core.telegram.org/bots) for a brief description of Telegram Bots and their features.
-
-See the [Telegram Bot API documentation](https://core.telegram.org/bots/api) for a description of the Bot API interface and a complete list of available classes, methods and updates.
-
-See the [Telegram Bot API server build instructions generator](https://tdlib.github.io/telegram-bot-api/build.html) for detailed instructions on how to build the Telegram Bot API server.
-
-Subscribe to [@BotNews](https://t.me/botnews) to be the first to know about the latest updates and join the discussion in [@BotTalk](https://t.me/bottalk).
-
-<a name="switching"></a>
-## Moving a bot to a local server
-
-To guarantee that your bot will receive all updates, you must deregister it with the `https://api.telegram.org` server by calling the method [logOut](https://core.telegram.org/bots/api#logout).
-After the bot is logged out, you can replace the address to which the bot sends requests with the address of your local server and use it in the usual way.
-If the server is launched in `--local` mode, make sure that the bot can correctly handle absolute file paths in response to `getFile` requests.
-
-<a name="moving"></a>
-## Moving a bot from one local server to another
-
-If the bot is logged in on more than one server simultaneously, there is no guarantee that it will receive all updates.
-To move a bot from one local server to another you can use the method [logOut](https://core.telegram.org/bots/api#logout) to log out on the old server before switching to the new one.
-
-If you want to avoid losing updates between logging out on the old server and launching on the new server, you can remove the bot's webhook using the method
-[deleteWebhook](https://core.telegram.org/bots/api#deletewebhook), then use the method [close](https://core.telegram.org/bots/api#close) to close the bot instance.
-After the instance is closed, locate the bot's subdirectory in the working directory of the old server by the bot's user ID, move the subdirectory to the working directory of the new server
-and continue sending requests to the new server as usual.
-
-<a name="license"></a>
-## License
-`Telegram Bot API server` source code is licensed under the terms of the Boost Software License. See [LICENSE_1_0.txt](http://www.boost.org/LICENSE_1_0.txt) for more information.
+if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT", 3000))
+    app.run(host="0.0.0.0", port=PORT)
+    https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=<7801617115:AAFg_Onl9I8Ewm_nQ6ZIIE-2n6iPf_-8IpY>
